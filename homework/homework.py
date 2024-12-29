@@ -8,6 +8,7 @@ from sklearn.metrics import precision_score, balanced_accuracy_score, recall_sco
 import joblib
 import gzip
 import json
+import os
 
 # flake8: noqa: E501
 #
@@ -107,6 +108,10 @@ import json
 train_data = pd.read_csv('files/input/train.csv')
 test_data = pd.read_csv('files/input/test.csv')
 
+# Cargar datasets
+train_data = pd.read_csv('files/input/train.csv')
+test_data = pd.read_csv('files/input/test.csv')
+
 # Step 1: Limpieza de los datasets
 def clean_data(df):
     df = df.rename(columns={'default payment next month': 'default'})
@@ -172,10 +177,10 @@ test_metrics = calculate_metrics(grid_search.best_estimator_, x_test, y_test, 't
 
 # Guardar modelo
 # Crear carpeta si no existe
-output_dir = '../files/output'
+output_dir = 'files/output'
 os.makedirs(output_dir, exist_ok=True)
 metrics = [train_metrics, test_metrics]
-with open('../files/output/metrics.json', 'w') as f:
+with open('files/output/metrics.json', 'w') as f:
     json.dump(metrics, f)
 
 # Step 7: Calcular  matrices de confusion
@@ -190,13 +195,16 @@ def calculate_confusion_matrix(model, x, y, dataset_type):
     }
     return cm_dict
 
-
 train_cm = calculate_confusion_matrix(grid_search.best_estimator_, x_train, y_train, 'train')
 test_cm = calculate_confusion_matrix(grid_search.best_estimator_, x_test, y_test, 'test')
 
 # Agregar metricas de matrices de confusion 
-metrics_extend =[train_cm, test_cm]
-# Guardar las matrices de confusión en el mismo archivo JSON
-with open('../files/output/metrics.json', 'a') as f:
-    for metric in metrics_extend:
-        f.write(json.dumps(metric) + '\n')
+metrics_extend = [train_cm, test_cm]
+
+# Leer el contenido existente del archivo metrics.json
+with open('files/output/metrics.json', 'r+') as f:
+    existing_metrics = json.load(f)
+    existing_metrics.extend(metrics_extend)
+    f.seek(0)
+    json.dump(existing_metrics, f)
+    f.truncate()
