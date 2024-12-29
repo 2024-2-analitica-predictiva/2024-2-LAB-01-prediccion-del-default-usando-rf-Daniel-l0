@@ -1,3 +1,14 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import precision_score, balanced_accuracy_score, recall_score, f1_score, confusion_matrix
+import joblib
+import gzip
+import json
+
 # flake8: noqa: E501
 #
 # En este dataset se desea pronosticar el default (pago) del cliente el próximo
@@ -92,3 +103,100 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+# Cargar datasets
+train_data = pd.read_csv('files/input/train.csv')
+test_data = pd.read_csv('files/input/test.csv')
+
+# Step 1: Limpieza de los datasets
+def clean_data(df):
+    df = df.rename(columns={'default payment next month': 'default'})
+    df = df.drop(columns=['ID'])
+    df = df.dropna()
+    df['EDUCATION'] = df['EDUCATION'].apply(lambda x: x if x <= 4 else 4)
+    return df
+
+train_data = clean_data(train_data)
+test_data = clean_data(test_data)
+
+# Paso 2: Dividir los datasets en x_train, y_train, x_test, y_test
+x_train = train_data.drop(columns=['default'])
+y_train = train_data['default']
+x_test = test_data.drop(columns=['default'])
+y_test = test_data['default']
+
+# Step 3: Crear pipeline
+categorical_features = ['SEX', 'EDUCATION', 'MARRIAGE']
+categorical_transformer = OneHotEncoder()
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('cat', categorical_transformer, categorical_features)
+    ],
+    remainder='passthrough'
+)
+
+pipeline = Pipeline(steps=[
+    ('preprocessor', preprocessor),
+    ('classifier', RandomForestClassifier())
+])
+
+# Step 4: Hyperparameter optimization
+param_grid = {
+    'classifier__n_estimators': [100, 200],
+    'classifier__max_depth': [None, 10, 20],
+    'classifier__min_samples_split': [2, 5],
+    'classifier__min_samples_leaf': [1, 2]
+}
+
+grid_search = GridSearchCV(pipeline, param_grid, cv=10, scoring='balanced_accuracy')
+grid_search.fit(x_train, y_train)
+
+# Guardar el modelo
+with gzip.open('files/models/model.pkl.gz', 'wb') as f:
+    joblib.dump(grid_search.best_estimator_, f)
+
+# Step 6: Calcular metricas
+def calculate_metrics(model, x, y, dataset_type):
+    y_pred = model.predict(x)
+    metrics = {
+        'dataset': dataset_type,
+        'precision': precision_score(y, y_pred),
+        'balanced_accuracy': balanced_accuracy_score(y, y_pred),
+        'recall': recall_score(y, y_pred),
+        'f1_score': f1_score(y, y_pred)
+    }
+    return metrics
+
+train_metrics = calculate_metrics(grid_search.best_estimator_, x_train, y_train, 'train')
+test_metrics = calculate_metrics(grid_search.best_estimator_, x_test, y_test, 'test')
+
+# Guardar modelo
+# Crear carpeta si no existe
+output_dir = '../files/output'
+os.makedirs(output_dir, exist_ok=True)
+metrics = [train_metrics, test_metrics]
+with open('../files/output/metrics.json', 'w') as f:
+    json.dump(metrics, f)
+
+# Step 7: Calcular  matrices de confusion
+def calculate_confusion_matrix(model, x, y, dataset_type):
+    y_pred = model.predict(x)
+    cm = confusion_matrix(y, y_pred)
+    cm_dict = {
+        'type': 'cm_matrix',
+        'dataset': dataset_type,
+        'true_0': {'predicted_0': int(cm[0, 0]), 'predicted_1': int(cm[0, 1])},
+        'true_1': {'predicted_0': int(cm[1, 0]), 'predicted_1': int(cm[1, 1])}
+    }
+    return cm_dict
+
+
+train_cm = calculate_confusion_matrix(grid_search.best_estimator_, x_train, y_train, 'train')
+test_cm = calculate_confusion_matrix(grid_search.best_estimator_, x_test, y_test, 'test')
+
+# Agregar metricas de matrices de confusion 
+metrics_extend =[train_cm, test_cm]
+# Guardar las matrices de confusión en el mismo archivo JSON
+with open('../files/output/metrics.json', 'a') as f:
+    for metric in metrics_extend:
+        f.write(json.dumps(metric) + '\n')
